@@ -1,0 +1,52 @@
+/* Define a fonte Inter como padrão */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+body {
+    font-family: 'Inter', sans-serif;
+}
+
+/* Estilos para a barra de rolagem */
+#chatWindow::-webkit-scrollbar {
+    width: 8px;
+}
+#chatWindow::-webkit-scrollbar-track {
+    background: #2f3136;
+}
+#chatWindow::-webkit-scrollbar-thumb {
+    background: #4f545c;
+    border-radius: 4px;
+}
+#chatWindow::-webkit-scrollbar-thumb:hover {
+    background: #5a6068;
+}
+
+/* Indicador da ferramenta ativa na barra lateral */
+.tool-button[aria-selected="true"]::before {
+    content: '';
+    position: absolute;
+    left: -4px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 8px;
+    height: 40px;
+    background-color: white;
+    border-radius: 0 4px 4px 0;
+}
+
+/* Bolhas de Chat */
+.user-bubble {
+    background-color: #5865f2; /* Azul Discord */
+    color: white;
+    align-self: flex-end;
+    border-radius: 20px 20px 5px 20px;
+}
+.bot-bubble {
+    background-color: #3a3c42; /* Cinza escuro */
+    color: #dbdee1; /* Texto claro */
+    align-self: flex-start;
+    border-radius: 20px 20px 20px 5px;
+}
+
+/* Classe utilitária 'hidden' (O Tailwind também fornece isso, mas garantimos aqui) */
+.hidden {
+    display: none;
+}
