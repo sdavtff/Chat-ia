@@ -34,7 +34,8 @@ let isLoading = false;
 
 // --- DOM Elements ---
 const loadingView = document.getElementById('loadingView');
-const loadingViewText = loadingView.querySelector('p'); // Seleciona o texto de loading
+const loadingSpinner = loadingView.querySelector('i');
+const loadingViewText = loadingView.querySelector('p'); 
 const setupView = document.getElementById('setupView');
 const appView = document.getElementById('appView');
 const setupForm = document.getElementById('setupForm');
@@ -69,23 +70,50 @@ function showView(viewName) {
     }
 }
 
+/**
+ * Mostra uma mensagem de erro fatal no ecrã de carregamento.
+ */
+function showFatalError(message, instruction = "") {
+    console.error("Erro Fatal:", message, instruction);
+    showView('loading');
+    loadingSpinner.classList.add('hidden'); // Esconde o spinner
+    loadingViewText.innerHTML = `
+        <span class="text-red-400 font-bold">Erro ao Conectar</span><br>
+        <span class="text-sm">${message}</span><br>
+        <span class="text-sm text-yellow-300 mt-2">${instruction}</span>
+    `;
+    loadingViewText.classList.remove('ml-3');
+    loadingViewText.classList.add('text-center');
+}
+
 // --- Funções de Inicialização e Autenticação ---
 
 async function initializeFirebase() {
     let firebaseConfig;
-    try {
-        firebaseConfig = JSON.parse(firebaseConfigStr);
-        // Verifica se a configuração tem chaves essenciais
-        if (!firebaseConfig.apiKey || !firebaseConfig.authDomain) {
-            throw new Error("Configuração do Firebase parece estar incompleta ou em falta.");
-        }
-    } catch (e) {
-        console.error("Erro ao analisar a configuração do Firebase:", e);
-        loadingViewText.textContent = "Erro: Configuração do Firebase inválida.";
-        loadingView.querySelector('i').classList.add('hidden'); // Esconde o spinner
-        return; // Pára a execução
+
+    // 1. Verificar se a configuração do Firebase foi injetada
+    if (firebaseConfigStr === '{}') {
+        showFatalError(
+            "A configuração do Firebase não foi encontrada.",
+            "Certifique-se que o ambiente está a injetar a variável __firebase_config."
+        );
+        return;
     }
 
+    try {
+        firebaseConfig = JSON.parse(firebaseConfigStr);
+        if (!firebaseConfig.apiKey || !firebaseConfig.authDomain) {
+            throw new Error("A configuração do Firebase parece estar incompleta.");
+        }
+    } catch (e) {
+        showFatalError(
+            `Erro ao processar a configuração do Firebase: ${e.message}`,
+            "A variável __firebase_config pode estar mal formatada."
+        );
+        return;
+    }
+
+    // 2. Tentar inicializar o Firebase
     try {
         app = initializeApp(firebaseConfig);
         db = getFirestore(app);
@@ -93,9 +121,10 @@ async function initializeFirebase() {
         setLogLevel('Debug');
         setupAuthListener(); // Inicia o ouvinte de autenticação
     } catch (error) {
-        console.error("Erro ao inicializar o Firebase:", error);
-        loadingViewText.textContent = `Erro ao inicializar: ${error.message}`;
-        loadingView.querySelector('i').classList.add('hidden');
+        showFatalError(
+            `Erro ao inicializar os serviços do Firebase: ${error.message}`,
+            "Verifique a configuração do seu projeto Firebase."
+        );
     }
 }
 
@@ -107,6 +136,8 @@ function setupAuthListener() {
             loadingViewText.textContent = "A verificar perfil...";
             
             const profileRef = doc(db, `/artifacts/${appId}/users/${currentUserId}/profile/main`);
+            
+            // 3. Tentar ler o perfil do Firestore
             try {
                 const profileSnap = await getDoc(profileRef);
 
@@ -121,15 +152,18 @@ function setupAuthListener() {
                     showView('setup');
                 }
             } catch (error) {
-                console.error("Erro ao buscar perfil:", error);
-                // Este erro pode acontecer se as regras do Firestore estiverem erradas
-                showView('setup'); 
-                setupError.textContent = "Erro ao verificar perfil. (Verifique as regras do Firestore).";
+                // Este é um erro MUITO comum (Permissão Negada)
+                showFatalError(
+                    `Falha ao ler o perfil do utilizador: ${error.message}`,
+                    "Atenção: Verifique as Regras de Segurança do Firestore. Precisa de permitir 'read' e 'write' para utilizadores autenticados no caminho /artifacts/{appId}/users/{userId}/..."
+                );
             }
 
         } else {
             // --- Ninguém Logado ---
-            loadingViewText.textContent = "A autenticar...";
+            loadingViewText.textContent = "A autenticar anonimamente...";
+            
+            // 4. Tentar fazer login anónimo
             try {
                 if (initialAuthToken) {
                     await signInWithCustomToken(auth, initialAuthToken);
@@ -138,9 +172,11 @@ function setupAuthListener() {
                 }
                 // onAuthStateChanged será chamado novamente com o 'user'
             } catch (error) {
-                console.error("Falha no login anónimo:", error);
-                loadingViewText.textContent = "Erro: Falha no login anónimo. (Verifique se está ativado na consola Firebase)";
-                loadingView.querySelector('i').classList.add('hidden');
+                // Este é o erro mais provável
+                showFatalError(
+                    `Falha no login anónimo: ${error.message}`,
+                    "Atenção: Vá à sua Consola Firebase > Authentication > Sign-in method e ATIVE o 'Login Anónimo'."
+                );
             }
         }
     });
@@ -159,6 +195,7 @@ setupForm.addEventListener('submit', async (e) => {
 
     try {
         const profileRef = doc(db, `/artifacts/${appId}/users/${currentUserId}/profile/main`);
+        // 5. Tentar escrever o perfil no Firestore
         await setDoc(profileRef, { name: name });
 
         globalUserName = name;
@@ -168,7 +205,7 @@ setupForm.addEventListener('submit', async (e) => {
 
     } catch (error) {
         console.error("Erro ao salvar nome:", error);
-        setupError.textContent = "Erro ao salvar o nome. Tente novamente.";
+        setupError.textContent = `Erro ao salvar: ${error.message}. Verifique as Regras do Firestore.`;
     } finally {
         setupButton.disabled = false;
         setupButton.textContent = "Entrar";
@@ -225,7 +262,7 @@ function setupChatListener(toolName) {
 
     }, (error) => {
         console.error(`Erro ao buscar mensagens de ${toolName}:`, error);
-        chatWindow.innerHTML = `<p class="text-red-500 text-center">Erro ao carregar histórico. (Verifique as regras do Firestore)</p>`;
+        chatWindow.innerHTML = `<p class="text-red-500 text-center">Erro ao carregar histórico: ${error.message}. (Verifique as Regras do Firestore)</p>`;
     });
 }
 
@@ -297,9 +334,19 @@ async function handleFormSubmit(e) {
     } catch (error) {
         console.error("Erro ao salvar mensagem do utilizador:", error);
         setLoadingState(false);
+        
+        // Tenta re-renderizar as mensagens que estavam
+        const currentMessages = getMessagesFromUI();
+        renderMessages(currentMessages);
+        
         // Adiciona uma mensagem de erro temporária
-        renderMessages(getMessagesFromUI()); // Re-renderiza mensagens atuais
-        chatWindow.insertAdjacentHTML('beforeend', `<p class="text-red-500 text-center text-sm">Falha ao enviar. Verifique as regras do Firestore.</p>`);
+        const errorP = document.createElement('p');
+        errorP.className = 'text-red-400 text-center text-sm my-2';
+        errorP.textContent = `Falha ao enviar: ${error.message}. (Verifique as Regras do Firestore)`;
+        chatWindow.insertBefore(errorP, loadingIndicator);
+        chatWindow.scrollTop = chatWindow.scrollHeight;
+        
+        messageInput.value = prompt; // Devolve o prompt ao utilizador
         return;
     }
 
@@ -321,7 +368,7 @@ async function handleFormSubmit(e) {
         }
     } catch (error) {
         console.error(`Erro na API (${currentTool}):`, error);
-        botResponse = { role: 'model', text: `Desculpe, ocorreu um erro: ${error.message}` };
+        botResponse = { role: 'model', text: `Desculpe, ocorreu um erro na API: ${error.message}` };
     }
 
     if (botResponse.text || botResponse.imageUrl) {
@@ -332,6 +379,7 @@ async function handleFormSubmit(e) {
             });
         } catch (error) {
              console.error("Erro ao salvar resposta do bot:", error);
+             // Não é crítico, mas deve ser logado
         }
     }
 
@@ -343,7 +391,8 @@ async function handleFormSubmit(e) {
 function getMessagesFromUI() {
     const messages = [];
     chatWindow.querySelectorAll('.user-bubble, .bot-bubble').forEach(bubble => {
-        if (bubble.id === 'loadingIndicator') return;
+        // Ignora o indicador de carregamento
+        if (bubble.id === 'loadingIndicator' || bubble.contains(loadingIndicator)) return;
         
         const isUser = bubble.classList.contains('user-bubble');
         const role = isUser ? 'user' : 'model';
@@ -367,12 +416,13 @@ async function fetchWithBackoff(url, options, maxRetries = 3) {
             if (!response.ok) {
                 const errorBody = await response.json();
                 console.error("Erro da API:", errorBody);
-                throw new Error(`HTTP error! status: ${response.status}`);
+                throw new Error(`Erro da API: ${response.status} - ${errorBody?.error?.message || 'Erro desconhecido'}`);
             }
             return await response.json();
         } catch (error) {
             console.warn(`Tentativa ${i+1} falhou. Tentando novamente em ${delay}ms...`, error.message);
             if (i === maxRetries - 1) {
+                // Se for a última tentativa, lança o erro
                 throw error; 
             }
             await new Promise(res => setTimeout(res, delay));
@@ -394,7 +444,7 @@ async function callGeminiApi(prompt) {
         body: JSON.stringify(payload)
     });
     const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) { throw new Error("Resposta inválida da API Gemini."); }
+    if (!text) { throw new Error("Resposta inválida da API Gemini (sem texto)."); }
     return text;
 }
 
@@ -410,7 +460,7 @@ async function callImageGenApi(prompt) {
         body: JSON.stringify(payload)
     });
     const base64Data = result.predictions?.[0]?.bytesBase64Encoded;
-    if (!base64Data) { throw new Error("Resposta inválida da API Imagen."); }
+    if (!base64Data) { throw new Error("Resposta inválida da API Imagen (sem dados)."); }
     return `data:image/png;base64,${base64Data}`;
 }
 
@@ -418,14 +468,14 @@ async function callMockOpenAiApi(prompt) {
     return new Promise(resolve => {
         setTimeout(() => {
             resolve("Eu sou uma simulação de bot. Por favor, use o 'Chat Gemini' ou o 'Gerador de Imagem' para interações reais.");
-        }, 1000);
+        }, 500);
     });
 }
 
 // --- Listeners de Eventos Globais ---
 document.addEventListener('DOMContentLoaded', () => {
     // Verifica se os elementos essenciais existem antes de continuar
-    if (loadingView && setupView && appView) {
+    if (loadingView && setupView && appView && messageForm && setupForm) {
         initializeFirebase();
 
         toolButtons.forEach(btn => {
@@ -436,7 +486,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         messageForm.addEventListener('submit', handleFormSubmit);
     } else {
-        console.error("Erro fatal: Elementos da UI não encontrados.");
-        document.body.innerHTML = "Erro fatal: A estrutura do HTML está em falta.";
+        console.error("Erro fatal: Elementos da UI não encontrados no HTML.");
+        document.body.innerHTML = "Erro fatal: A estrutura do HTML está em falta ou foi alterada.";
     }
 });
